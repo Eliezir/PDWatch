@@ -2,7 +2,6 @@ import Foundation
 import IOKit
 import IOKit.ps
 import Observation
-import UserNotifications
 
 struct PowerSample: Identifiable {
     let id = UUID()
@@ -13,11 +12,22 @@ struct PowerSample: Identifiable {
     let drawing: Double?
 }
 
+/// One poll of the Mac's power state.
+struct PowerReading {
+    var offeredWatts: Int?
+    var voltage: Double?
+    var current: Double?
+    var adapterName: String?
+    var drawingWatts: Double?
+    var batteryPercent: Int?
+    var isCharging = false
+}
+
 /// Polls macOS for the current USB-C Power Delivery contract.
 ///
 /// - Offered watts come from `IOPSCopyExternalPowerAdapterDetails()`, the same
 ///   number `system_profiler SPPowerDataType` shows. It changes when the monitor
-///   renegotiates (its dynamic 18–45 W budget).
+///   renegotiates.
 /// - Live draw comes from the `PowerTelemetryData` dictionary on
 ///   `AppleSmartBattery` (`SystemPowerIn`, in milliwatts). Only laptops have it.
 @MainActor
@@ -41,24 +51,36 @@ final class PowerMonitor {
     let pollInterval: TimeInterval = 2
 
     @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private let read: () -> PowerReading
+    @ObservationIgnored private let services: Services
 
     /// Notifications only work from a real .app bundle (see build.sh).
-    /// Under `swift run`, UNUserNotificationCenter would crash, so we skip it.
-    static let canNotify = Bundle.main.bundlePath.hasSuffix(".app")
+    static var canNotify: Bool { Notifier.isAvailable }
 
     var isBelowTarget: Bool {
         guard let offeredWatts else { return false }
         return offeredWatts < targetWatts
     }
 
-    init() {
-        let defaults = UserDefaults.standard
-        targetWatts = defaults.object(forKey: Keys.target) as? Int ?? 45
-        notifyOnDrop = defaults.object(forKey: Keys.notify) as? Bool ?? true
+    /// - Parameters:
+    ///   - read: where readings come from. The real one asks IOKit.
+    ///   - history: samples to start the chart with. The last one counts as
+    ///     the previous reading, so a seeded history doesn't look like a change.
+    init(
+        read: @escaping () -> PowerReading = SystemPower.read,
+        services: Services = .live,
+        history: [PowerSample] = []
+    ) {
+        self.read = read
+        self.services = services
+        targetWatts = services.defaults.object(forKey: Keys.target) as? Int ?? 45
+        notifyOnDrop = services.defaults.object(forKey: Keys.notify) as? Bool ?? true
 
-        if Self.canNotify && notifyOnDrop {
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-        }
+        self.history = history
+        offeredWatts = history.last?.offered
+        lastChange = Array(zip(history, history.dropFirst())).last { $0.offered != $1.offered }?.1.date
+
+        if notifyOnDrop { services.requestNotificationPermission() }
 
         refresh()
         let timer = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in
@@ -73,24 +95,27 @@ final class PowerMonitor {
 
     func setTarget(_ watts: Int) {
         targetWatts = watts
-        UserDefaults.standard.set(watts, forKey: Keys.target)
+        services.defaults.set(watts, forKey: Keys.target)
     }
 
     func setNotifyOnDrop(_ enabled: Bool) {
         notifyOnDrop = enabled
-        UserDefaults.standard.set(enabled, forKey: Keys.notify)
-        if enabled && Self.canNotify {
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-        }
+        services.defaults.set(enabled, forKey: Keys.notify)
+        if enabled { services.requestNotificationPermission() }
     }
 
     // MARK: Polling
 
     func refresh() {
         let previous = offeredWatts
-        readAdapter()
-        readTelemetry()
-        readBattery()
+        let reading = read()
+        offeredWatts = reading.offeredWatts
+        voltage = reading.voltage
+        current = reading.current
+        adapterName = reading.adapterName
+        drawingWatts = reading.drawingWatts
+        batteryPercent = reading.batteryPercent
+        isCharging = reading.isCharging
 
         let now = Date()
         if offeredWatts != previous {
@@ -102,23 +127,52 @@ final class PowerMonitor {
         history.removeAll { now.timeIntervalSince($0.date) > historyWindow }
     }
 
-    private func readAdapter() {
-        guard let details = IOPSCopyExternalPowerAdapterDetails()?.takeRetainedValue() as? [String: Any] else {
-            offeredWatts = nil; voltage = nil; current = nil; adapterName = nil
-            return
+    // MARK: Alerts
+
+    private func checkThreshold(old: Int?, new: Int?) {
+        guard notifyOnDrop, let new else { return }
+        let wasAtTarget = (old ?? targetWatts) >= targetWatts
+
+        if new < targetWatts && wasAtTarget {
+            services.notify(
+                "Charging dropped to \(new) W",
+                "The monitor is sharing its power budget. Unplug USB devices or lower brightness to get back to \(targetWatts) W."
+            )
+        } else if let old, old < targetWatts, new >= targetWatts {
+            services.notify("Back to \(new) W", "The monitor is offering full power again.")
         }
-        offeredWatts = details["Watts"] as? Int
+    }
+
+    private enum Keys {
+        static let target = "power.targetWatts"
+        static let notify = "power.notifyOnDrop"
+    }
+}
+
+/// Reads the Mac's real power state from IOKit.
+enum SystemPower {
+    static func read() -> PowerReading {
+        var reading = PowerReading()
+        readAdapter(into: &reading)
+        readTelemetry(into: &reading)
+        readBattery(into: &reading)
+        return reading
+    }
+
+    private static func readAdapter(into reading: inout PowerReading) {
+        guard let details = IOPSCopyExternalPowerAdapterDetails()?.takeRetainedValue() as? [String: Any] else { return }
+        reading.offeredWatts = details["Watts"] as? Int
         // Key names differ a little between macOS versions and adapters.
         let millivolts = (details["AdapterVoltage"] as? Int) ?? (details["Voltage"] as? Int)
         let milliamps = details["Current"] as? Int
-        voltage = millivolts.map { Double($0) / 1000 }
-        current = milliamps.map { Double($0) / 1000 }
-        adapterName = (details["Name"] as? String) ?? (details["Description"] as? String)
+        reading.voltage = millivolts.map { Double($0) / 1000 }
+        reading.current = milliamps.map { Double($0) / 1000 }
+        reading.adapterName = (details["Name"] as? String) ?? (details["Description"] as? String)
     }
 
-    private func readTelemetry() {
+    private static func readTelemetry(into reading: inout PowerReading) {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
-        guard service != 0 else { drawingWatts = nil; return }
+        guard service != 0 else { return }
         defer { IOObjectRelease(service) }
 
         guard
@@ -126,55 +180,25 @@ final class PowerMonitor {
                 service, "PowerTelemetryData" as CFString, kCFAllocatorDefault, 0
             )?.takeRetainedValue() as? [String: Any],
             let milliwatts = telemetry["SystemPowerIn"] as? Int
-        else { drawingWatts = nil; return }
+        else { return }
 
-        drawingWatts = Double(milliwatts) / 1000
+        reading.drawingWatts = Double(milliwatts) / 1000
     }
 
-    private func readBattery() {
+    private static func readBattery(into reading: inout PowerReading) {
         guard
             let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
             let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef]
-        else { batteryPercent = nil; return }
+        else { return }
 
         for source in list {
             guard
                 let description = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any],
                 description["Type"] as? String == "InternalBattery"
             else { continue }
-            batteryPercent = description["Current Capacity"] as? Int
-            isCharging = description["Is Charging"] as? Bool ?? false
+            reading.batteryPercent = description["Current Capacity"] as? Int
+            reading.isCharging = description["Is Charging"] as? Bool ?? false
             return
         }
-        batteryPercent = nil
-    }
-
-    // MARK: Alerts
-
-    private func checkThreshold(old: Int?, new: Int?) {
-        guard notifyOnDrop, Self.canNotify, let new else { return }
-        let wasAtTarget = (old ?? targetWatts) >= targetWatts
-
-        if new < targetWatts && wasAtTarget {
-            post(
-                title: "Charging dropped to \(new) W",
-                body: "The monitor is sharing its power budget. Unplug USB devices or lower brightness to get back to \(targetWatts) W."
-            )
-        } else if let old, old < targetWatts, new >= targetWatts {
-            post(title: "Back to \(new) W", body: "The monitor is offering full power again.")
-        }
-    }
-
-    private func post(title: String, body: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
-    }
-
-    private enum Keys {
-        static let target = "power.targetWatts"
-        static let notify = "power.notifyOnDrop"
     }
 }
