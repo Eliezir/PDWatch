@@ -5,13 +5,23 @@ struct PDWatchApp: App {
     // Plain State storage instead of @State: on the macOS 27 SDK @State is a
     // macro whose plugin ships only with Xcode, not the Command Line Tools.
     private let powerState = State(initialValue: PowerMonitor())
-    private let displayState = State(initialValue: GigabyteMonitor())
+    private let displayState: State<GigabyteMonitor>
+    private let dualModeState: State<DualModeWatcher>
     private var power: PowerMonitor { powerState.wrappedValue }
     private var display: GigabyteMonitor { displayState.wrappedValue }
+    private var dualMode: DualModeWatcher { dualModeState.wrappedValue }
+
+    init() {
+        let display = GigabyteMonitor()
+        displayState = State(initialValue: display)
+        dualModeState = State(initialValue: DualModeWatcher(display: display))
+    }
 
     var body: some Scene {
         MenuBarExtra {
-            MenuView(power: power, display: display)
+            MenuView(power: power, display: display, dualMode: dualMode)
+            .disclosureGroupStyle(RowDisclosureStyle())
+            .shrinksMenuWindowToFit()
         } label: {
             MenuBarLabel(power: power)
         }
