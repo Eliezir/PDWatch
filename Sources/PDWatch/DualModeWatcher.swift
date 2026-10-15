@@ -16,18 +16,18 @@ enum DualMode: Equatable {
     }
 }
 
-/// Keeps the monitor in 4K mode while it shows this Mac.
+/// Reminds you to switch the monitor back to 4K when it comes back to this
+/// Mac in Full HD mode.
 ///
 /// The monitor reports its current mode through its EDID: in Full HD mode it
-/// stops listing any 4K timing. PDWatch acts only when the monitor *becomes*
-/// this Mac's input, so pressing Tactical Switch for 320 Hz on another
-/// computer still works; PDWatch switches back the next time you return.
+/// stops listing any 4K timing. PDWatch can't change the mode itself: the
+/// monitor exposes Dual Mode only as a read-only status (vendor code 0xE053),
+/// so the reminder asks you to press Tactical Switch.
 ///
-/// "Became this Mac's input" means the monitor's USB controller appeared
-/// (the KVM hands USB to whichever computer is on screen) or macOS added the
-/// display. Until the Dual Mode command is known (see `GigabyteMonitor
-/// .dualModeCommand`), PDWatch sends a notification asking you to press
-/// Tactical Switch instead.
+/// The notification goes out when the monitor *becomes* this Mac's input
+/// (its USB controller appeared, or macOS added the display), so picking
+/// 320 Hz on another computer doesn't nag you there. While the reminder is on
+/// and the monitor is in Full HD, the menu bar icon shows it too.
 @MainActor
 @Observable
 final class DualModeWatcher {
@@ -35,7 +35,11 @@ final class DualModeWatcher {
     private(set) var lastAction: String?
     private(set) var enabled: Bool
 
+    /// The reminder is on and the monitor is in Full HD mode.
+    var needsAttention: Bool { enabled && mode == .fhd }
+
     @ObservationIgnored private let display: GigabyteMonitor
+    @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private let readEDIDs: () -> [[UInt8]]
     @ObservationIgnored private let services: Services
 
@@ -67,6 +71,12 @@ final class DualModeWatcher {
             }, Unmanaged.passUnretained(self).toOpaque())
         }
 
+        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshMode() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+
         if display.isConnected { becameActive(reason: "launch") }
     }
 
@@ -78,22 +88,19 @@ final class DualModeWatcher {
     }
 
     func refreshMode() {
-        mode = readEDIDs().compactMap(EDIDInfo.init).first { $0.isM27UP }?.mode
+        let newMode = readEDIDs().compactMap(EDIDInfo.init).first { $0.isM27UP }?.mode
+        if newMode != mode { mode = newMode }
+        if mode != .fhd { lastAction = nil }
     }
 
     private func becameActive(reason: String) {
         refreshMode()
-        guard enabled, mode == .fhd else { return }
-
-        if display.setDualMode(.uhd) {
-            lastAction = "Switched to 4K (\(reason))."
-        } else {
-            lastAction = "Monitor is in Full HD mode. Press Tactical Switch for 4K."
-            services.notify(
-                "Monitor is in Full HD mode",
-                "Press the Tactical Switch button on the M27UP to go back to 4K."
-            )
-        }
+        guard needsAttention else { return }
+        lastAction = "Monitor is in Full HD mode. Press Tactical Switch for 4K."
+        services.notify(
+            "Monitor is in Full HD mode",
+            "Press the Tactical Switch button on the M27UP to go back to 4K."
+        )
     }
 
     /// EDIDs of external displays, from the DisplayPort transport metadata.

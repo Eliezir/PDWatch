@@ -112,7 +112,7 @@ struct MenuView: View {
                         .font(.system(.body, design: .rounded).weight(.semibold))
                         .foregroundStyle(dualMode.mode == .fhd ? Color.orange : Color.primary)
                         .contentTransition(.opacity)
-                    Text(dualMode.enabled ? "Keep 4K on" : "Keep 4K off")
+                    Text(dualMode.enabled ? "Reminder on" : "Reminder off")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -122,7 +122,7 @@ struct MenuView: View {
         }
         .buttonStyle(.plain)
         .module(padding: 10, highlighted: dualMode.mode == .fhd)
-        .help(dualMode.lastAction ?? "Use 4K mode on this Mac")
+        .help(dualMode.lastAction ?? "Remind me to switch to 4K when the monitor comes back to this Mac in Full HD")
     }
 
     private var monitorModule: some View {

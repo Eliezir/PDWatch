@@ -98,11 +98,6 @@ final class GigabyteMonitor {
     /// just handed this Mac the monitor's USB, i.e. this Mac is on screen.
     @ObservationIgnored var onConnect: (() -> Void)?
 
-    /// The OSD command that sets Dual Mode, as (VCP code, value for 4K).
-    /// Not known yet: no public source documents it. Fill it in once it's
-    /// found (see README), and `setDualMode` starts switching for real.
-    static let dualModeCommand: (code: UInt16, uhdValue: UInt8)? = nil
-
     init(transport: MonitorTransport? = nil, services: Services = .live) {
         let transport = transport ?? HIDTransport()
         self.transport = transport
@@ -171,13 +166,6 @@ final class GigabyteMonitor {
         let wasConnected = isConnected
         isConnected = transport.rescan()
         if isConnected && !wasConnected { onConnect?() }
-    }
-
-    /// Switches Dual Mode. Returns false when the command isn't known yet
-    /// or the monitor isn't reachable, so the caller can fall back.
-    func setDualMode(_ mode: DualMode) -> Bool {
-        guard mode == .uhd, let command = Self.dualModeCommand, isConnected else { return false }
-        return sendRaw(code: command.code, value: command.uhdValue)
     }
 
     func refreshDiagnostics() {

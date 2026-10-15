@@ -13,8 +13,8 @@ Gigabyte M27UP's OSD from the menu bar.
 - Sends a notification when charging drops below the target and when it recovers.
 - Controls brightness, contrast, volume, sharpness, blue light filter, color
   temperature and the KVM switch over USB.
-- "Use 4K mode on this Mac" keeps the M27UP's Dual Mode in 4K while it shows
-  this Mac. See [Dual Mode](#dual-mode).
+- Reminds you to switch the M27UP back to 4K when it returns to this Mac in
+  Full HD mode. See [Dual Mode](#dual-mode).
 - "Dim to save power" lowers brightness to free up the monitor's power budget,
   then restores it.
 
@@ -82,27 +82,25 @@ monitor's USB-C port (or its USB-B upstream port) and KVM routes USB to that inp
 ## Dual Mode
 
 The M27UP switches between 4K (up to 160 Hz) and Full HD (up to 320 Hz) with
-its Tactical Switch button. The setting is monitor-wide, so PDWatch acts only
-when the monitor *becomes* this Mac's input: when the monitor's USB controller
-appears (the KVM follows the input on screen) or macOS adds the display. You
-can still pick 320 Hz on another computer; PDWatch switches back to 4K the
-next time you return to the Mac. Turn it off with "Use 4K mode on this Mac".
+its Tactical Switch button. The setting is monitor-wide, so pick 320 Hz on
+another computer and the monitor stays in Full HD when it comes back to the
+Mac.
 
-PDWatch reads the current mode from the monitor's EDID: in Full HD mode it
-stops listing any 4K timing.
+With the reminder on (the 4K tile), PDWatch sends a notification when the
+monitor becomes this Mac's input in Full HD mode: when its USB controller
+appears (the KVM follows the input on screen) or macOS adds the display.
+While the monitor is in Full HD, the menu bar shows a display warning next
+to the wattage. Click the 4K tile to turn the reminder off.
 
-The USB command that sets Dual Mode isn't known yet, so for now PDWatch sends
-a notification asking you to press Tactical Switch. Once the command is
-found, fill in `GigabyteMonitor.dualModeCommand` and PDWatch switches on its
-own. Ways to find it:
+PDWatch reads the mode from the monitor's EDID: in Full HD mode it stops
+listing any 4K timing.
 
-- Connect the Mac straight to the monitor's USB-C port and read the DDC/CI
-  capabilities string, which lists the codes the monitor supports. A dock's
-  DP-to-HDMI output doesn't pass DDC through.
-- Capture OSD Sidekick's USB traffic on Windows (Wireshark and USBPcap) while
-  it changes Dual Mode, if it can.
-
-Don't probe unknown codes on the monitor: some of them trigger a factory reset.
+PDWatch can't switch the mode itself. Over DDC the monitor reports Dual Mode
+as vendor code 0xE053 (0 = 4K, 1 = Full HD), but writing it does nothing;
+it's a read-only status. If Gigabyte's OSD Sidekick can change Dual Mode,
+capturing its USB traffic on Windows (Wireshark and USBPcap) would reveal
+the real command. Don't probe unknown codes on the monitor: some of them
+trigger a factory reset.
 
 ## Limits
 

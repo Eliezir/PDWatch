@@ -23,15 +23,17 @@ struct PDWatchApp: App {
             .disclosureGroupStyle(RowDisclosureStyle())
             .shrinksMenuWindowToFit()
         } label: {
-            MenuBarLabel(power: power)
+            MenuBarLabel(power: power, dualMode: dualMode)
         }
         .menuBarExtraStyle(.window)
     }
 }
 
-/// What shows in the menu bar: an icon plus the wattage the monitor is offering.
+/// What shows in the menu bar: an icon plus the wattage the monitor is
+/// offering, and a display warning while the monitor is stuck in Full HD.
 struct MenuBarLabel: View {
     let power: PowerMonitor
+    let dualMode: DualModeWatcher
 
     var body: some View {
         let icon: String = {
@@ -39,6 +41,10 @@ struct MenuBarLabel: View {
             return power.isBelowTarget ? "exclamationmark.triangle.fill" : "bolt.fill"
         }()
         let text = power.offeredWatts.map { "\($0)W" } ?? "–"
-        Text("\(Image(systemName: icon)) \(text)")
+        if dualMode.needsAttention {
+            Text("\(Image(systemName: icon)) \(text) \(Image(systemName: "display.trianglebadge.exclamationmark"))")
+        } else {
+            Text("\(Image(systemName: icon)) \(text)")
+        }
     }
 }
