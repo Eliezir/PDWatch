@@ -16,7 +16,7 @@ enum OSDSetting: String, CaseIterable {
         case .volume:           return 0x62
         case .colorTemperature: return 0xE003   // 0 cool, 1 normal, 2 warm, 3 user
         case .lowBlueLight:     return 0xE00B
-        case .kvm:              return 0xE069   // 0 or 1
+        case .kvm:              return 0xE069   // write 1 to toggle
         }
     }
 
@@ -146,9 +146,11 @@ final class GigabyteMonitor {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
     }
 
-    /// Moves the monitor's picture and USB devices to KVM device 0 or 1.
-    func switchKVM(to device: Int) {
-        send(.kvm, device)
+    /// Switches the KVM to its other slot, like pressing the monitor's KVM
+    /// button: picture and USB hub move together, per the KVM Wizard pairing.
+    /// On the M27UP the value 1 toggles; it doesn't select a slot.
+    func toggleKVM() {
+        send(.kvm, 1)
     }
 
     /// Drops brightness to free up the monitor's power budget, or restores it.

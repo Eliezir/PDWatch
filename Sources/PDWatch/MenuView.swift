@@ -150,8 +150,7 @@ struct MenuView: View {
                                 label: display.dimmedFrom == nil ? "Dim" : "Restore",
                                 active: display.dimmedFrom != nil,
                                 tint: power.isBelowTarget && display.dimmedFrom == nil ? .orange : .accentColor) { display.toggleDim() }
-                    RoundAction(systemImage: "1.circle", label: "KVM 1") { display.switchKVM(to: 0) }
-                    RoundAction(systemImage: "2.circle", label: "KVM 2") { display.switchKVM(to: 1) }
+                    RoundAction(systemImage: "arrow.left.arrow.right", label: "Switch KVM") { display.toggleKVM() }
                 }
             }
             .disabled(!display.isConnected)

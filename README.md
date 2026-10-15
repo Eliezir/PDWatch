@@ -116,6 +116,12 @@ Don't probe unknown codes on the monitor: some of them trigger a factory reset.
 - Commands are write-only, so the sliders show what the app last set, not what
   the monitor's joystick changed.
 - OSD control only works from the computer that is the active KVM input.
+- The KVM command (0xE069) toggles: writing 1 is the same as pressing the
+  monitor's KVM button. It doesn't select a slot.
+- Don't change the KVM Wizard pairing over DDC (vendor code 0x6B). Pairing
+  USB-B with Type-C from software left the monitor's USB-C USB switched off,
+  even after the value was restored, and only the monitor's own menu can be
+  trusted to set it up.
 - There's no known code for the monitor's Power Delivery setting. If you
   find one (for example by capturing OSD Sidekick's USB traffic on Windows with
   Wireshark and USBPcap), add it to `OSDSetting`.
